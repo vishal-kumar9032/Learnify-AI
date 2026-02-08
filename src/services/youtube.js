@@ -1,8 +1,8 @@
-const API_KEY = "YOUR_YOUTUBE_API_KEY";
+const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
 export async function fetchPlaylistDetails(playlistId) {
-    if (!API_KEY || API_KEY === 'your_youtube_api_key') {
+    if (!API_KEY) {
         throw new Error("YouTube API Key is missing. Please check your .env file.");
     }
 
@@ -23,7 +23,7 @@ export async function fetchPlaylistDetails(playlistId) {
 }
 
 export async function fetchPlaylistItems(playlistId, pageToken = '') {
-    if (!API_KEY || API_KEY === 'your_youtube_api_key') {
+    if (!API_KEY) {
         throw new Error("YouTube API Key is missing.");
     }
 
@@ -39,7 +39,7 @@ export async function fetchPlaylistItems(playlistId, pageToken = '') {
 }
 
 export async function searchPlaylists(query) {
-    if (!API_KEY || API_KEY === 'your_youtube_api_key') {
+    if (!API_KEY) {
         throw new Error("YouTube API Key is missing.");
     }
 

@@ -1,5 +1,10 @@
 const fs = require('fs');
-const API_KEY = 'YOUR_API_KEY';
+require('dotenv').config();
+const API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+if (!API_KEY) {
+    console.error('GEMINI API key missing. Set VITE_GEMINI_API_KEY in .env or environment.');
+    process.exit(1);
+}
 const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`;
 
 async function listModels() {
