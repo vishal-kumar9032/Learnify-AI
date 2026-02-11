@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { leetcodeService } from '../../services/leetcode';
+import { getCachedProblemDetails, cacheProblemDetails } from '../../services/problemCacheService';
 import { PROBLEMS } from '../../data/problems';
 
 // Simple markdown-to-HTML for local problem descriptions
@@ -42,13 +43,13 @@ export default function ProblemSolver() {
     const [testResults, setTestResults] = useState(null); // array of {passed, input, expected, actual, error}
     const [isRunning, setIsRunning] = useState(false);
 
-    // Load problem — check local PROBLEMS first, then fallback to API
+    // Load problem: Local PROBLEMS → Firebase cache → API → cache to Firebase
     useEffect(() => {
         if (!problemId) return;
         (async () => {
             setLoading(true);
             try {
-                // 1. Check if we have this problem locally (with testRunner + starterCode)
+                // 1. Check local PROBLEMS (has testRunner + starterCode)
                 const local = PROBLEMS.find(p => p.id === problemId);
                 setLocalProblem(local || null);
 
@@ -60,21 +61,42 @@ export default function ProblemSolver() {
                         description: local.description,
                         examples: local.examples,
                     });
-                    // Set starter code for default language
-                    const defaultLang = 'javascript';
-                    setEditorLanguage(defaultLang);
-                    setEditorCode(local.starterCode?.[defaultLang] || '');
-                } else {
-                    // 2. Fallback to API
-                    const data = await leetcodeService.getProblemDetails(problemId);
-                    if (data) {
-                        setSelectedProblem({
-                            id: problemId,
-                            title: data.questionTitle || problemId.split('-').map(w => w[0]?.toUpperCase() + w.slice(1)).join(' '),
-                            difficulty: data.difficulty || 'Medium',
-                            description: data.question || data.content || (typeof data === 'string' ? data : 'No description available.'),
-                        });
-                    }
+                    setEditorLanguage('javascript');
+                    setEditorCode(local.starterCode?.javascript || '');
+                    return;
+                }
+
+                // 2. Try Firebase cache (instant, no API needed)
+                const cached = await getCachedProblemDetails(problemId);
+                if (cached) {
+                    console.log(`[ProblemSolver] Loaded "${problemId}" from Firebase cache`);
+                    setSelectedProblem({
+                        id: problemId,
+                        title: cached.title,
+                        difficulty: cached.difficulty,
+                        description: cached.description || 'No description available.',
+                        examples: cached.examples || [],
+                        codeSnippets: cached.codeSnippets || [],
+                    });
+                    return;
+                }
+
+                // 3. Fallback to API
+                const data = await leetcodeService.getProblemDetails(problemId);
+                if (data) {
+                    setSelectedProblem({
+                        id: problemId,
+                        title: data.questionTitle || problemId.split('-').map(w => w[0]?.toUpperCase() + w.slice(1)).join(' '),
+                        difficulty: data.difficulty || 'Medium',
+                        description: data.question || data.content || 'No description available.',
+                        examples: data.exampleTestcaseList || [],
+                        codeSnippets: data.codeSnippets || [],
+                    });
+
+                    // 4. Cache to Firebase for next time (non-blocking)
+                    cacheProblemDetails(problemId, data).catch(err =>
+                        console.warn('Failed to cache problem details:', err.message)
+                    );
                 }
             } catch (err) {
                 console.error("Error loading problem", err);

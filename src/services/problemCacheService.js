@@ -9,16 +9,36 @@ const COLLECTION = 'leetcodeProblems';
 const META_DOC = '_metadata';
 
 /**
- * Cache an array of problems to Firestore.
- * Uses batch writes for efficiency (max 500 per batch).
+ * Cache an array of problems from the list API.
+ * DEDUP: Only writes problems that don't already exist in Firestore.
  */
 export async function cacheProblems(problems) {
     if (!problems?.length) return;
 
-    const batchSize = 450; // stay under Firestore's 500 limit
-    for (let i = 0; i < problems.length; i += batchSize) {
+    // 1. Check which ones already exist
+    const existingSlugs = new Set();
+    const batchSize = 10; // check in small batches via getDoc
+    for (const p of problems) {
+        try {
+            const snap = await getDoc(doc(db, COLLECTION, p.titleSlug));
+            if (snap.exists()) existingSlugs.add(p.titleSlug);
+        } catch { /* ignore */ }
+    }
+
+    // 2. Filter to only new problems
+    const newProblems = problems.filter(p => !existingSlugs.has(p.titleSlug));
+    if (newProblems.length === 0) {
+        console.log(`[Cache] All ${problems.length} problems already cached, skipping.`);
+        return;
+    }
+
+    console.log(`[Cache] Saving ${newProblems.length} new problems (${existingSlugs.size} already cached).`);
+
+    // 3. Batch write new problems
+    const chunkSize = 450;
+    for (let i = 0; i < newProblems.length; i += chunkSize) {
         const batch = writeBatch(db);
-        const chunk = problems.slice(i, i + batchSize);
+        const chunk = newProblems.slice(i, i + chunkSize);
 
         chunk.forEach(p => {
             const docRef = doc(db, COLLECTION, p.titleSlug);
@@ -32,47 +52,95 @@ export async function cacheProblems(problems) {
                     name: t.name || '',
                     slug: t.slug || '',
                 })),
-                // Flatten topic names for filtering
                 topicNames: (p.topicTags || []).map(t => t.name || ''),
                 frontendQuestionId: p.frontendQuestionId || null,
+                hasDetails: false, // mark that we don't have description yet
                 cachedAt: Timestamp.now(),
-            }, { merge: true });
+            });
         });
 
         await batch.commit();
     }
 
-    // Update metadata timestamp
+    // Update metadata
     await setDoc(doc(db, COLLECTION, META_DOC), {
         lastSyncedAt: Timestamp.now(),
-        totalCached: problems.length,
     }, { merge: true });
 }
 
 /**
+ * Cache full problem details (description, examples, code snippets).
+ * Only writes if the doc doesn't already have details.
+ */
+export async function cacheProblemDetails(titleSlug, details) {
+    if (!titleSlug || !details) return;
+
+    try {
+        const docRef = doc(db, COLLECTION, titleSlug);
+        const snap = await getDoc(docRef);
+
+        // DEDUP: skip if details already cached
+        if (snap.exists() && snap.data().hasDetails) {
+            console.log(`[Cache] Details for "${titleSlug}" already cached, skipping.`);
+            return;
+        }
+
+        await setDoc(docRef, {
+            titleSlug,
+            title: details.questionTitle || details.title || '',
+            difficulty: details.difficulty || 'Medium',
+            description: details.question || details.content || '',
+            examples: details.exampleTestcaseList || details.examples || [],
+            hints: details.hints || [],
+            codeSnippets: details.codeSnippets || [],
+            topicTags: (details.topicTags || []).map(t => ({
+                name: t.name || '',
+                slug: t.slug || '',
+            })),
+            topicNames: (details.topicTags || []).map(t => t.name || ''),
+            hasDetails: true,
+            detailsCachedAt: Timestamp.now(),
+        }, { merge: true });
+
+        console.log(`[Cache] Saved details for "${titleSlug}".`);
+    } catch (error) {
+        console.warn('[Cache] Failed to save problem details:', error.message);
+    }
+}
+
+/**
+ * Get cached problem details from Firestore.
+ * Returns the full document data or null if not found / no details.
+ */
+export async function getCachedProblemDetails(titleSlug) {
+    try {
+        const snap = await getDoc(doc(db, COLLECTION, titleSlug));
+        if (snap.exists()) {
+            const data = snap.data();
+            if (data.hasDetails) return data;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Get cached problems with cursor-based pagination.
- * @param {number} pageSize
- * @param {DocumentSnapshot|null} startAfterDoc - cursor from previous page
- * @param {object} filters - { difficulty, topicName, search }
- * @returns {{ problems: Array, lastDoc: DocumentSnapshot|null, hasMore: boolean }}
  */
 export async function getCachedProblems(pageSize = 30, startAfterDoc = null, filters = {}) {
     try {
         const colRef = collection(db, COLLECTION);
         const constraints = [orderBy('titleSlug')];
 
-        // Difficulty filter
         if (filters.difficulty && filters.difficulty !== 'All') {
             constraints.unshift(where('difficulty', '==', filters.difficulty));
         }
-
-        // Topic filter
         if (filters.topicName && filters.topicName !== 'All Topics') {
             constraints.unshift(where('topicNames', 'array-contains', filters.topicName));
         }
 
-        constraints.push(firestoreLimit(pageSize + 1)); // fetch one extra to check hasMore
-
+        constraints.push(firestoreLimit(pageSize + 1));
         if (startAfterDoc) {
             constraints.push(startAfter(startAfterDoc));
         }
@@ -101,8 +169,7 @@ export async function getLastSyncTime() {
     try {
         const snap = await getDoc(doc(db, COLLECTION, META_DOC));
         if (snap.exists()) {
-            const data = snap.data();
-            return data.lastSyncedAt?.toDate() || null;
+            return snap.data().lastSyncedAt?.toDate() || null;
         }
         return null;
     } catch {
