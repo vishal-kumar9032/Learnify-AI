@@ -13,59 +13,77 @@ const META_DOC = '_metadata';
  * DEDUP: Only writes problems that don't already exist in Firestore.
  */
 export async function cacheProblems(problems) {
-    if (!problems?.length) return;
-
-    // 1. Check which ones already exist
-    const existingSlugs = new Set();
-    const batchSize = 10; // check in small batches via getDoc
-    for (const p of problems) {
-        try {
-            const snap = await getDoc(doc(db, COLLECTION, p.titleSlug));
-            if (snap.exists()) existingSlugs.add(p.titleSlug);
-        } catch { /* ignore */ }
-    }
-
-    // 2. Filter to only new problems
-    const newProblems = problems.filter(p => !existingSlugs.has(p.titleSlug));
-    if (newProblems.length === 0) {
-        console.log(`[Cache] All ${problems.length} problems already cached, skipping.`);
+    if (!problems?.length) {
+        console.log('[Cache] No problems to cache');
         return;
     }
 
-    console.log(`[Cache] Saving ${newProblems.length} new problems (${existingSlugs.size} already cached).`);
+    console.log(`[Cache] Starting to cache ${problems.length} problems...`);
 
-    // 3. Batch write new problems
-    const chunkSize = 450;
-    for (let i = 0; i < newProblems.length; i += chunkSize) {
-        const batch = writeBatch(db);
-        const chunk = newProblems.slice(i, i + chunkSize);
-
-        chunk.forEach(p => {
-            const docRef = doc(db, COLLECTION, p.titleSlug);
-            batch.set(docRef, {
-                titleSlug: p.titleSlug,
-                title: p.title || '',
-                difficulty: p.difficulty || 'Medium',
-                acRate: p.acRate || null,
-                isPaidOnly: p.isPaidOnly || false,
-                topicTags: (p.topicTags || []).map(t => ({
-                    name: t.name || '',
-                    slug: t.slug || '',
-                })),
-                topicNames: (p.topicTags || []).map(t => t.name || ''),
-                frontendQuestionId: p.frontendQuestionId || null,
-                hasDetails: false, // mark that we don't have description yet
-                cachedAt: Timestamp.now(),
-            });
+    try {
+        const existingSlugs = new Set();
+        
+        const colRef = collection(db, COLLECTION);
+        const existingSnapshot = await getDocs(colRef);
+        existingSnapshot.forEach(doc => {
+            if (doc.id !== META_DOC) {
+                existingSlugs.add(doc.id);
+            }
         });
 
-        await batch.commit();
-    }
+        const newProblems = problems.filter(p => p.titleSlug && !existingSlugs.has(p.titleSlug));
+        
+        if (newProblems.length === 0) {
+            console.log(`[Cache] All ${problems.length} problems already cached, skipping.`);
+            return;
+        }
 
-    // Update metadata
-    await setDoc(doc(db, COLLECTION, META_DOC), {
-        lastSyncedAt: Timestamp.now(),
-    }, { merge: true });
+        console.log(`[Cache] Saving ${newProblems.length} new problems (${existingSlugs.size} already exist).`);
+
+        const chunkSize = 450;
+        for (let i = 0; i < newProblems.length; i += chunkSize) {
+            const batch = writeBatch(db);
+            const chunk = newProblems.slice(i, i + chunkSize);
+
+            chunk.forEach(p => {
+                if (!p.titleSlug) return;
+                const docRef = doc(db, COLLECTION, p.titleSlug);
+                batch.set(docRef, {
+                    titleSlug: p.titleSlug,
+                    title: p.title || '',
+                    difficulty: p.difficulty || 'Medium',
+                    acRate: p.acRate || null,
+                    isPaidOnly: p.isPaidOnly || false,
+                    topicTags: (p.topicTags || []).map(t => ({
+                        name: t.name || t || '',
+                        slug: t.slug || '',
+                    })),
+                    topicNames: (p.topicTags || []).map(t => t.name || t || ''),
+                    frontendQuestionId: p.frontendQuestionId || null,
+                    description: p.description || '',
+                    examples: p.examples || [],
+                    constraints: p.constraints || [],
+                    hints: p.hints || [],
+                    starterCode: p.starterCode || {},
+                    hasDetails: p.hasDetails ?? false,
+                    isLocal: p.isLocal || false,
+                    cachedAt: Timestamp.now(),
+                });
+            });
+
+            await batch.commit();
+            console.log(`[Cache] Batch committed: ${Math.min(i + chunkSize, newProblems.length)}/${newProblems.length}`);
+        }
+
+        await setDoc(doc(db, COLLECTION, META_DOC), {
+            lastSyncedAt: Timestamp.now(),
+        }, { merge: true });
+
+        console.log(`[Cache] Successfully cached ${newProblems.length} problems.`);
+    } catch (error) {
+        console.error('[Cache] Error caching problems:', error);
+        throw error;
+    }
 }
 
 /**
@@ -85,19 +103,27 @@ export async function cacheProblemDetails(titleSlug, details) {
             return;
         }
 
+        const starterCode = details.starterCode || {};
+        const codeSnippets = details.codeSnippets || [];
+
         await setDoc(docRef, {
             titleSlug,
-            title: details.questionTitle || details.title || '',
+            title: details.title || details.questionTitle || '',
             difficulty: details.difficulty || 'Medium',
-            description: details.question || details.content || '',
-            examples: details.exampleTestcaseList || details.examples || [],
+            description: details.description || details.question || details.content || '',
+            examples: details.examples || [],
+            exampleTestcases: details.exampleTestcases || [],
             hints: details.hints || [],
-            codeSnippets: details.codeSnippets || [],
+            constraints: details.constraints || [],
+            codeSnippets,
+            starterCode,
             topicTags: (details.topicTags || []).map(t => ({
                 name: t.name || '',
                 slug: t.slug || '',
             })),
             topicNames: (details.topicTags || []).map(t => t.name || ''),
+            likes: details.likes || 0,
+            dislikes: details.dislikes || 0,
             hasDetails: true,
             detailsCachedAt: Timestamp.now(),
         }, { merge: true });
