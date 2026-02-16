@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, updateDoc, increment, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, increment, onSnapshot, arrayUnion } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useAuth } from '../context/AuthContext';
 import { fetchPlaylistItems } from '../services/youtube';
@@ -21,6 +21,7 @@ export default function CourseDetails() {
     const [activeVideo, setActiveVideo] = useState(null);
     const [activeTab, setActiveTab] = useState('overview');
     const [completedVideos, setCompletedVideos] = useState([]);
+    const [userProfile, setUserProfile] = useState(null);
     const { currentUser } = useAuth();
     const [error, setError] = useState(null);
 
@@ -97,8 +98,10 @@ export default function CourseDetails() {
                 const userRef = doc(db, "users", currentUser.uid);
                 unsubscribeUser = onSnapshot(userRef, (userSnap) => {
                     if (userSnap.exists()) {
-                        const progress = userSnap.data().progress || {};
+                        const userData = userSnap.data();
+                        const progress = userData.progress || {};
                         setCompletedVideos(progress[courseId]?.completedVideos || []);
+                        setUserProfile(userData);
                     }
                 }, (err) => console.error("User snapshot error:", err));
             }
@@ -121,15 +124,40 @@ export default function CourseDetails() {
 
         try {
             const userRef = doc(db, "users", currentUser.uid);
+            const today = new Date().toISOString().split('T')[0];
             await updateDoc(userRef, {
                 [`progress.${courseId}.completedVideos`]: newCompleted,
                 "learningStats.videosWatched": increment(1),
-                "learningStats.xp": increment(10)
+                "learningStats.xp": increment(10),
+                "lastActiveDate": today
             });
         } catch (err) {
             console.error("Error updating progress:", err);
         }
     }
+
+    useEffect(() => {
+        if (!currentUser || !course || videos.length === 0 || completedVideos.length === 0) return;
+        
+        const allCompleted = videos.length > 0 && videos.every(v => completedVideos.includes(v.id));
+        const alreadyMarkedComplete = userProfile?.completedCourses?.includes(courseId);
+        
+        if (allCompleted && !alreadyMarkedComplete) {
+            const markCourseComplete = async () => {
+                try {
+                    const userRef = doc(db, "users", currentUser.uid);
+                    await updateDoc(userRef, {
+                        "learningStats.coursesCompleted": increment(1),
+                        "learningStats.xp": increment(50),
+                        "completedCourses": arrayUnion(courseId)
+                    });
+                } catch (err) {
+                    console.error("Error updating course completion:", err);
+                }
+            };
+            markCourseComplete();
+        }
+    }, [completedVideos, videos, course, courseId, currentUser, userProfile]);
 
     if (loading) return (
         <div className="flex items-center justify-center min-h-[400px]">

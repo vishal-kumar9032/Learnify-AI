@@ -1,6 +1,7 @@
 import { useState, lazy, Suspense } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useAppTheme } from '../context/AppThemeContext';
 import {
     Home, BookOpen, Users, User, LogOut, Menu, X, Map,
     Globe, Terminal, Zap, Sparkles, ChevronRight, Bell, Search
@@ -20,6 +21,7 @@ export default function Layout() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [hoveredNav, setHoveredNav] = useState(null);
     const { currentUser, logout } = useAuth();
+    const { navbarAlign } = useAppTheme();
     const location = useLocation();
 
     const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
@@ -57,10 +59,11 @@ export default function Layout() {
 
                 {/* Sidebar */}
                 <aside className={`
-                    fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-out lg:static lg:translate-x-0
-                    ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+                    fixed inset-y-0 z-50 w-72 transform transition-transform duration-300 ease-out lg:static lg:translate-x-0
+                    ${navbarAlign === 'right' ? 'right-0' : 'left-0'}
+                    ${isSidebarOpen ? 'translate-x-0' : navbarAlign === 'right' ? 'translate-x-full lg:translate-x-0' : '-translate-x-full lg:translate-x-0'}
                 `}>
-                    <div className="h-full bg-white dark:bg-gray-900/95 border-r border-gray-200/50 dark:border-gray-800/50 flex flex-col">
+                    <div className={`h-full bg-white dark:bg-gray-900/95 border-r border-gray-200/50 dark:border-gray-800/50 flex flex-col ${navbarAlign === 'right' ? 'lg:border-l lg:border-r-0' : ''}`}>
                         {/* Logo */}
                         <div className="p-6">
                             <Link to="/" className="flex items-center gap-3">

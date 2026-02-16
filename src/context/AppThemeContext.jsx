@@ -15,9 +15,19 @@ export function AppThemeProvider({ children }) {
         return localStorage.getItem('accentColor') || 'orange';
     });
 
+    const [navbarAlign, setNavbarAlign] = useState(() => {
+        return localStorage.getItem('navbarAlign') || 'left';
+    });
+
+    const [notifications, setNotifications] = useState(() => {
+        return localStorage.getItem('notifications') !== 'false';
+    });
+
     useEffect(() => {
         localStorage.setItem('appTheme', theme);
         localStorage.setItem('accentColor', accentColor);
+        localStorage.setItem('navbarAlign', navbarAlign);
+        localStorage.setItem('notifications', notifications.toString());
 
         const root = document.documentElement;
         
@@ -33,7 +43,7 @@ export function AppThemeProvider({ children }) {
                 root.classList.remove('dark');
             }
         }
-    }, [theme, accentColor]);
+    }, [theme, accentColor, navbarAlign, notifications]);
 
     useEffect(() => {
         if (theme === 'system') {
@@ -54,7 +64,11 @@ export function AppThemeProvider({ children }) {
         theme,
         setTheme,
         accentColor,
-        setAccentColor
+        setAccentColor,
+        navbarAlign,
+        setNavbarAlign,
+        notifications,
+        setNotifications
     };
 
     return (

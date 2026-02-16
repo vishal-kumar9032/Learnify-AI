@@ -31,8 +31,8 @@ const ACCENT_COLORS = [
 ];
 
 export default function Profile() {
-    const { currentUser, logout } = useAuth();
-    const { theme: appTheme, setTheme: setAppTheme, accentColor: appAccentColor, setAccentColor: setAppAccentColor } = useAppTheme();
+    const { currentUser, logout, userProfile } = useAuth();
+    const { theme: appTheme, setTheme: setAppTheme, accentColor: appAccentColor, setAccentColor: setAppAccentColor, navbarAlign: appNavbarAlign, setNavbarAlign: setAppNavbarAlign, notifications: appNotifications, setNotifications: setAppNotifications } = useAppTheme();
     const [profile, setProfile] = useState(null);
     const [editing, setEditing] = useState(false);
     const [bio, setBio] = useState('');
@@ -41,15 +41,23 @@ export default function Profile() {
     const [activeTab, setActiveTab] = useState('profile');
     const [saving, setSaving] = useState(false);
     
-    // Settings State - synced with AppThemeContext
     const [theme, setTheme] = useState(appTheme);
-    const [navbarAlign, setNavbarAlign] = useState('left');
+    const [navbarAlign, setNavbarAlign] = useState(appNavbarAlign);
     const [accentColor, setAccentColor] = useState(appAccentColor);
-    const [notifications, setNotifications] = useState(true);
+    const [notifications, setNotifications] = useState(appNotifications);
 
     useEffect(() => {
-        fetchProfile();
-    }, [currentUser]);
+        if (userProfile) {
+            setProfile(userProfile);
+            setBio(userProfile.bio || '');
+            setDisplayName(userProfile.displayName || currentUser?.displayName || '');
+            setLoading(false);
+        } else if (currentUser) {
+            fetchProfile();
+        } else {
+            setLoading(false);
+        }
+    }, [currentUser, userProfile]);
 
     async function fetchProfile() {
         if (!currentUser) {
@@ -64,24 +72,31 @@ export default function Profile() {
                 setProfile(data);
                 setBio(data.bio || '');
                 setDisplayName(data.displayName || currentUser.displayName || '');
-                
-                // Sync with AppThemeContext
-                const savedTheme = data.settings?.theme || appTheme;
-                const savedAccent = data.settings?.accentColor || appAccentColor;
-                
-                setTheme(savedTheme);
-                setAccentColor(savedAccent);
-                setAppTheme(savedTheme);
-                setAppAccentColor(savedAccent);
-                
-                setNavbarAlign(data.settings?.navbarAlign || 'left');
-                setNotifications(data.settings?.notifications ?? true);
             }
         } catch (err) {
             console.error(err);
         } finally {
             setLoading(false);
         }
+    }
+
+    function calculateStreak() {
+        if (!profile?.lastActiveDate) return 0;
+        const lastActive = new Date(profile.lastActiveDate);
+        const today = new Date();
+        const diffTime = today.getTime() - lastActive.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays > 1) return 0;
+        return profile.currentStreak || 0;
+    }
+
+    function calculateLevel() {
+        const xp = profile?.learningStats?.xp || 0;
+        if (xp >= 1000) return { level: 'Expert', color: 'text-purple-500' };
+        if (xp >= 500) return { level: 'Advanced', color: 'text-blue-500' };
+        if (xp >= 200) return { level: 'Intermediate', color: 'text-green-500' };
+        if (xp >= 50) return { level: 'Learner', color: 'text-yellow-500' };
+        return { level: 'Beginner', color: 'text-gray-400' };
     }
 
     async function handleSaveProfile() {
@@ -112,10 +127,6 @@ export default function Profile() {
                     notifications,
                 }
             }, { merge: true });
-            
-            // Apply theme changes to app
-            setAppTheme(theme);
-            setAppAccentColor(accentColor);
         } catch (err) {
             console.error(err);
         }
@@ -131,9 +142,22 @@ export default function Profile() {
         setAppAccentColor(newAccent);
     };
 
+    const handleNavbarAlignChange = (newAlign) => {
+        setNavbarAlign(newAlign);
+        setAppNavbarAlign(newAlign);
+    };
+
+    const handleNotificationsChange = (value) => {
+        setNotifications(value);
+        setAppNotifications(value);
+    };
+
     useEffect(() => {
         if (profile) handleSaveSettings();
     }, [theme, navbarAlign, accentColor, notifications]);
+
+    const streak = calculateStreak();
+    const levelInfo = calculateLevel();
 
     if (loading) return (
         <div className="flex items-center justify-center min-h-[400px]">
@@ -174,10 +198,10 @@ export default function Profile() {
                         <p className="text-white/80">{currentUser.email}</p>
                         <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 mt-4">
                             <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-sm text-white font-medium flex items-center gap-1">
-                                <Flame className="w-4 h-4" /> 0 day streak
+                                <Flame className="w-4 h-4" /> {streak} day streak
                             </span>
-                            <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-sm text-white font-medium flex items-center gap-1">
-                                <Target className="w-4 h-4" /> Beginner
+                            <span className={`px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-sm text-white font-medium flex items-center gap-1`}>
+                                <Target className="w-4 h-4" /> {levelInfo.level}
                             </span>
                         </div>
                     </div>
@@ -389,7 +413,7 @@ export default function Profile() {
                                 {NAVBAR_ALIGNMENTS.map(align => (
                                     <button
                                         key={align.id}
-                                        onClick={() => setNavbarAlign(align.id)}
+                                        onClick={() => handleNavbarAlignChange(align.id)}
                                         className={`flex-1 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                                             navbarAlign === align.id
                                                 ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-2 border-orange-500/30'
@@ -416,7 +440,7 @@ export default function Profile() {
                                 <div className="text-xs text-gray-500">Receive updates about your courses</div>
                             </div>
                             <button
-                                onClick={() => setNotifications(!notifications)}
+                                onClick={() => handleNotificationsChange(!notifications)}
                                 className={`w-12 h-6 rounded-full transition-colors relative ${
                                     notifications ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-700'
                                 }`}
